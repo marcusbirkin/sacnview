@@ -45,8 +45,10 @@ macx {
     DEPLOY_TARGET = $${OUT_PWD}/$${TARGET}$${TARGET_CUSTOM_EXT}
 
     DEPLOY_COMMAND = macdeployqt
+    
+    # Sign "tagged" builds only
+    DEPLOY_CLEANUP = git describe --exact-match --tags HEAD && codesign --force --deep --verify --verbose --sign \"Thomas Steer\" $${DEPLOY_TARGET} || echo "Not signing build" $$escape_expand(\\n\\t)
 
-    DEPLOY_CLEANUP = codesign --force --deep --verify --verbose --sign \"Thomas Steer\" $${DEPLOY_TARGET} $$escape_expand(\\n\\t)
     DEPLOY_CLEANUP += $${QMAKE_DEL_FILE} $${DEPLOY_DIR}/sACNView*.dmg
 
     DEPLOY_INSTALLER = $${_PRO_FILE_PWD_}/install/mac/create-dmg --volname "sACNView_Installer" --volicon "$${_PRO_FILE_PWD_}/res/icon.icns"

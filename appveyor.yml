@@ -1,71 +1,101 @@
-#---------------------------------#
-#      general configuration      #
-#---------------------------------#
+image:
+  - Visual Studio 2015
+  - Visual Studio 2017
+  - Ubuntu1604
+  - macOS
 
-# branches to build
-#branches:
-#  # whitelist
-#  only:
-#    - master
-
-# Start builds on tags only
-#skip_non_tags: true
-
-#---------------------------------#
-#       build configuration       #
-#---------------------------------#
-
-environment:
-  matrix:
-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2015
-      QT_Ver: 5.6
-      MSVC_Compiler: msvc2015
-      MSVC_Name: Microsoft Visual Studio 14.0
-    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
-      QT_Ver: 5.12
-      MSVC_Compiler: msvc2017
-      MSVC_Name: Microsoft Visual Studio 14.0
-
-# build platform, i.e. x86, x64, Any CPU. This setting is optional.
-platform: x86
-
-# build Configuration, i.e. Debug, Release, etc.
 configuration: Release
 
-build:
-  parallel: true                  # enable MSBuild parallel builds
-
-  # MSBuild verbosity level
-  verbosity: detailed
+platform: Any CPU
 
 init:
-  - appveyor UpdateBuild -Version %APPVEYOR_REPO_COMMIT%
+  - cmd: appveyor UpdateBuild -Version %APPVEYOR_REPO_COMMIT%
+  - sh: appveyor UpdateBuild -Version $APPVEYOR_REPO_COMMIT
 
 install:
-  # Submodules
   - git submodule update --init --recursive
 
   # MSVC Paths
   # https://www.appveyor.com/docs/lang/cpp/#visual-studio
-  - call "C:\Program Files (x86)\%MSVC_Name%\VC\vcvarsall.bat" x86
-
+  - cmd: call "C:\Program Files (x86)\%MSVC_Name%\VC\vcvarsall.bat" x86
   # QT Paths
   # https://www.appveyor.com/docs/build-environment/#qt
-  - set QTDIR=C:\Qt\%QT_Ver%\%MSVC_Compiler%
-  - set PATH=%PATH%;%QTDIR%\bin
-
+  - cmd: set QTDIR=C:\Qt\%QT_Ver%\%MSVC_Compiler%
+  - cmd: set PATH=%PATH%;%QTDIR%\bin
+  - sh: PATH=$HOME/Qt/$QT_Ver/gcc_64/bin:$PATH
   # NSIS Paths
   # https://www.appveyor.com/docs/build-environment/#tools
-  - set PATH=%PATH%;C:\Program Files (x86)\NSIS
-
+  - cmd: set PATH=%PATH%;C:\Program Files (x86)\NSIS
   # NSIS Plugin (SimpleFC)
-  - appveyor DownloadFile http://nsis.sourceforge.net/mediawiki/images/d/d7/NSIS_Simple_Firewall_Plugin_1.20.zip
-  - 7z e NSIS_Simple_Firewall_Plugin_1.20.zip -o"C:\Program Files (x86)\NSIS\Plugins\x86-ansi" SimpleFC.dll
+  - cmd: curl -L -o %TEMP%/NSIS_Simple_Firewall_Plugin_1.20.zip http://nsis.sourceforge.net/mediawiki/images/d/d7/NSIS_Simple_Firewall_Plugin_1.20.zip
+  - cmd: 7z e %TEMP%/NSIS_Simple_Firewall_Plugin_1.20.zip -o"C:\Program Files (x86)\NSIS\Plugins\x86-ansi" SimpleFC.dll
 
 build_script:
-  - qmake
-  - nmake
+  - cmd: qmake
+  - cmd: nmake
+  - sh: qmake
+  - sh: make -j$(nproc)
 
-artifacts:
-  - path: install\win\*.exe
-  - path: release\*.pdb
+for:
+  -
+    matrix:
+      only:
+        - image: Visual Studio 2015
+    environment:
+      QT_Ver: 5.6
+      MSVC_Compiler: msvc2015
+      MSVC_Name: Microsoft Visual Studio 14.0
+
+    artifacts:
+      - path: install\win\*.exe
+      - path: release\*.pdb
+
+  -
+    matrix:
+      only:
+        - image: Visual Studio 2017
+    environment:
+      QT_Ver: 5.12
+      MSVC_Compiler: msvc2017
+      MSVC_Name: Microsoft Visual Studio 14.0
+
+    artifacts:
+      - path: install\win\*.exe
+      - path: release\*.pdb
+
+  -
+    matrix:
+      only:
+        - image: Ubuntu1604
+    environment:
+      QT_Ver: 5.12
+        
+    artifacts:
+      - path: install/linux/*.AppImage
+      - path: install/linux/*.deb
+
+    before_build:       
+      # FPM
+      - sudo add-apt-repository -y 'ppa:brightbox/ruby-ng' && sudo apt-get update
+      - sudo apt-get -y install build-essential ruby2.3 ruby2.3-dev
+      - cd install/linux/ && cp _FPM_Makefile Makefile && make package && sudo dpkg -i fpm*.deb && fpm --version && cd ../../
+
+      # GUI Dependent
+      - sudo apt-get -y install mesa-common-dev libgl1-mesa-dev
+
+      # PCap
+      - sudo apt-get -y install libpcap-dev
+
+  -
+    matrix:
+      only:
+        - image: macOS
+
+    artifacts:
+      - path: install/mac/*.dmg
+
+    before_build:
+      # Setup code signing
+      - chmod +x install/mac/sign-mac-executable.sh && ./install/mac/sign-mac-executable.sh
+      # PCap
+      - brew install libpcap
