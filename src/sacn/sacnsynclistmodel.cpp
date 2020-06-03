@@ -18,7 +18,7 @@ sACNSyncListModel::sACNSyncListModel(QObject *parent) :
     for (auto weakListener : sACNManager::getInstance()->getListenerList()) {
         auto listener = weakListener.toStrongRef();
         for (auto source : listener->getSourceList())
-            if (!source->active.Expired() &&
+            if (!source->src_valid &&
                     source->synchronization)
                 addSyncAddress(source->synchronization);
     }
@@ -314,7 +314,7 @@ bool sACNSyncListModel::isSyncAddressEmpty(tsyncAddress syncAddress) {
     for (auto weakListener : sACNManager::getInstance()->getListenerList()) {
         auto listener = weakListener.toStrongRef();
         for (auto source : listener->getSourceList())
-            if (!source->active.Expired() &&
+            if (!source->src_valid &&
                     source->synchronization == syncAddress)
                 return false;
     }
@@ -342,7 +342,7 @@ void sACNSyncListModel::addSyncAddress(tsyncAddress syncAddress) {
     for (auto weakListener : sACNManager::getInstance()->getListenerList()) {
         auto listener = weakListener.toStrongRef();
         for (auto source : listener->getSourceList())
-            if (!source->active.Expired() &&
+            if (!source->src_valid &&
                     source->synchronization == syncAddress) {
                 addSyncedUniverse(syncAddress, source->universe);
                 addSyncedUniverseSource(source);
