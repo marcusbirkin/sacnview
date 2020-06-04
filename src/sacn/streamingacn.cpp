@@ -62,10 +62,7 @@ sACNSource::sACNSource() :
     priority(0),
     seqErr(0),
     jumps(0)
-{
-    std::fill(std::begin(level_array), std::end(level_array), 0);
-    std::fill(priority_array, priority_array + sizeof(priority_array), 0);
-}
+{}
 
 sACNManager *sACNManager::m_instance = NULL;
 

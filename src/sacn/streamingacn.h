@@ -123,9 +123,9 @@ public:
     std::array<quint8, DMX_SLOT_MAX> level_array = {};
     std::array<quint8, DMX_SLOT_MAX> last_level_array = {};
     quint16 slot_count; // Number of slots actually received
-    quint8 priority_array[DMX_SLOT_MAX];
-    quint8 last_priority_array[DMX_SLOT_MAX];
-    bool dirty_array[DMX_SLOT_MAX]; // Set if an individual level or priority has changed
+    std::array<quint8, DMX_SLOT_MAX> priority_array = {};
+    std::array<quint8, DMX_SLOT_MAX> last_priority_array = {};
+    std::array<bool, DMX_SLOT_MAX> dirty_array; // Set if an individual level or priority has changed
     bool source_params_change; // Set if any parameter of the source changes between packets
     bool source_levels_change;
 

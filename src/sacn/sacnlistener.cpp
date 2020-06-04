@@ -573,10 +573,14 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
 
         case STARTCODE_PRIORITY:
             // Copy the last array back
-            memcpy(ps->last_priority_array, ps->priority_array, DMX_SLOT_MAX);
+            std::copy(std::begin(ps->priority_array), std::end(ps->priority_array), std::begin(ps->last_priority_array));
+
             // Fill in the new array
-            memset(ps->priority_array, 0, DMX_SLOT_MAX);
-            memcpy(ps->priority_array, pdata, slot_count);
+            std::copy(&pdata[0], &pdata[slot_count], std::begin(ps->priority_array));
+            std::fill(std::begin(ps->priority_array) + slot_count,
+                      std::begin(ps->priority_array) + slot_count + (DMX_SLOT_MAX - slot_count),
+                      NULL);
+
             // Compare the two
             for(int i=0; i<DMX_SLOT_MAX; i++)
             {
@@ -693,7 +697,7 @@ void sACNListener::performMerge()
                 }
             }
             // Clear the flags
-            memset(ps->dirty_array, 0 , DMX_SLOT_MAX);
+            std::fill(std::begin(ps->dirty_array), std::end(ps->dirty_array), false);
             ps->source_levels_change = false;
         }
     }
@@ -733,7 +737,7 @@ void sACNListener::performMerge()
         if(ps->src_valid && !ps->active.Expired() && !ps->doing_per_channel)
         {
             // Set the priority array for sources which are not doing per-channel
-            memset(ps->priority_array, ps->priority, sizeof(ps->priority_array));
+            std::fill(std::begin(ps->priority_array), std::end(ps->priority_array), ps->priority);
         }
 
         skipCounter = 0;
