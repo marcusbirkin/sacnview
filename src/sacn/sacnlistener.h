@@ -112,6 +112,7 @@ signals:
     void dataReady(int address, QPointF data);
 private slots:
     void readPendingDatagrams();
+    void processPreMerge(sACNSource *source, quint16 slot_count, quint8 *pdata);
     void performMerge();
     void checkSourceExpiration();
     void sampleExpiration();
@@ -135,8 +136,8 @@ private:
     QMutex m_monitoredChannelsMutex;
     QSet<int> m_monitoredChannels;
     bool m_mergeAll; // A flag to initiate a complete remerge of everything
-    unsigned int m_mergesPerSecond;
-    int m_mergeCounter;
+    unsigned int m_mergesPerSecond = 0;
+    int m_mergeCounter = 0;
     QElapsedTimer m_mergesPerSecondTimer;
 
     sACNRxSocket::sBindStatus m_bindStatus;

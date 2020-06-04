@@ -120,10 +120,10 @@ public:
                                   //(either by receiving priority or timeout).  If doing_per_channel,
                                   //used to time out the 0xdd packets to see if we lost per-channel priority
     quint16 universe;
-    quint8 level_array[DMX_SLOT_MAX];
+    std::array<quint8, DMX_SLOT_MAX> level_array = {};
+    std::array<quint8, DMX_SLOT_MAX> last_level_array = {};
     quint16 slot_count; // Number of slots actually received
     quint8 priority_array[DMX_SLOT_MAX];
-    quint8 last_level_array[DMX_SLOT_MAX];
     quint8 last_priority_array[DMX_SLOT_MAX];
     bool dirty_array[DMX_SLOT_MAX]; // Set if an individual level or priority has changed
     bool source_params_change; // Set if any parameter of the source changes between packets
@@ -131,6 +131,7 @@ public:
 
     quint8 priority;
     quint16 synchronization;
+    std::vector<quint8> pending_level_array; // Pre-synchronised levels
     sACNManager::tListener sync_listener;
     QString name;
     QHostAddress ip;

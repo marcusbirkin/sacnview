@@ -63,7 +63,7 @@ sACNSource::sACNSource() :
     seqErr(0),
     jumps(0)
 {
-    std::fill(level_array, level_array + sizeof(level_array), 0);
+    std::fill(std::begin(level_array), std::end(level_array), 0);
     std::fill(priority_array, priority_array + sizeof(priority_array), 0);
 }
 

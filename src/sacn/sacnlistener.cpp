@@ -42,8 +42,7 @@
 sACNListener::sACNListener(int universe, QObject *parent) : QObject(parent),
     m_universe(universe),
     m_ssHLL(1000),
-    m_isSampling(true),
-    m_mergesPerSecond(0)
+    m_isSampling(true)
 {
     qRegisterMetaType<QHostAddress>("QHostAddress");
 
@@ -101,6 +100,22 @@ void sACNListener::startReception()
     connect(m_mergeTimer, SIGNAL(timeout()), this, SLOT(performMerge()), Qt::DirectConnection);
     connect(m_mergeTimer, SIGNAL(timeout()), this, SLOT(checkSourceExpiration()), Qt::DirectConnection);
     m_mergeTimer->start();
+
+    // Merge on Synchronize
+    connect(sACNSynchronizationRX::getInstance(), &sACNSynchronizationRX::synchronize,
+            this, [=](tsyncAddress syncAddress)
+    {
+        bool doMerge = false;
+        for (auto source : m_sources)
+            if (source->synchronization == syncAddress
+                    && source->src_valid) {
+                processPreMerge(source, source->pending_level_array.size(), source->pending_level_array.data());
+                doMerge = true;
+            }
+
+        if (doMerge)
+            performMerge();
+    }, Qt::DirectConnection);
 
     // Everything is set
     emit listenerStarted(m_universe);
@@ -440,6 +455,7 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
         ps->ip = sender;
         ps->universe = universe;
         ps->synchronization = synchronization;
+        ps->pending_level_array.reserve(DMX_SLOT_MAX);
         ps->active.SetInterval(E131_NETWORK_DATA_LOSS_TIMEOUT + m_ssHLL);
         ps->lastseq = sequence;
         ps->src_cid = source_cid;
@@ -502,62 +518,60 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
             ps->source_params_change = true;
         }
 
-        if(start_code == STARTCODE_DMX)
-        {
-            if(ps->name!=name)
-            {
-                ps->name = name;
-                ps->source_params_change = true;
-            }
-            if(ps->isPreview != preview)
-            {
-                ps->isPreview = preview;
-                ps->source_params_change = true;
-            }
-            if(ps->priority != priority)
-            {
-                ps->priority = priority;
-                ps->source_params_change = true;
-            }
-            if(ps->synchronization != synchronization)
-            {
-                ps->synchronization = synchronization;
-                ps->source_params_change = true;
-            }
-            // This is DMX
-            // Copy the last array back
-            memcpy(ps->last_level_array, ps->level_array, DMX_SLOT_MAX);
-            // Fill in the new array
-            memset(ps->level_array, 0, DMX_SLOT_MAX);
-            memcpy(ps->level_array, pdata, slot_count);
+        switch (start_code) {
+            case STARTCODE_DMX:
+                // FPS Counter - we count only DMX frames
+                ps->fpscounter.newFrame();
+                if (ps->fpscounter.isNewFPS())
+                    ps->source_params_change = true;
 
-            // Slot count change, re-merge all slots
-            if(ps->slot_count != slot_count)
-            {
-                ps->slot_count = slot_count;
-                ps->source_params_change = true;
-                ps->source_levels_change = true;
-                for(int i=0; i<DMX_SLOT_MAX; i++)
-                    ps->dirty_array[i] |= true;
-            }
-
-            // Compare the two
-            for(int i=0; i<DMX_SLOT_MAX; i++)
-            {
-                if(ps->level_array[i]!=ps->last_level_array[i])
+                if (ps->name!=name)
                 {
-                    ps->dirty_array[i] |= true;
-                    ps->source_levels_change = true;
+                    ps->name = name;
+                    ps->source_params_change = true;
                 }
-            }
 
-            // FPS Counter - we count only DMX frames
-            ps->fpscounter.newFrame();
-            if (ps->fpscounter.isNewFPS())
-                ps->source_params_change = true;
-        }
-        else if(start_code == STARTCODE_PRIORITY)
-        {
+                if (ps->isPreview != preview)
+                {
+                    ps->isPreview = preview;
+                    ps->source_params_change = true;
+                }
+
+                if (ps->priority != priority)
+                {
+                    ps->priority = priority;
+                    ps->source_params_change = true;
+                }
+
+                if (ps->synchronization != synchronization)
+                {
+                    ps->synchronization = synchronization;
+                    ps->source_params_change = true;
+                }
+
+                if (ps->synchronization == NOT_SYNCHRONIZED_VALUE) {
+                    // Normal DMX data, process
+                    processPreMerge(ps, slot_count, pdata);
+
+                    // ... and merge
+                    performMerge();
+                } else {
+                    // Listen to synchronization source
+                    if (ps->synchronization &&
+                            (!ps->sync_listener || ps->sync_listener->universe() != ps->synchronization)) {
+                        ps->sync_listener = sACNManager::getInstance()->getListener(ps->synchronization);
+                    }
+
+                    // We need to wait for a synchronization go...
+                    // processPreMerge is called with ps->pending_level_array when
+                    // &sACNSynchronizationRX::synchronize is emited
+                    ps->pending_level_array.resize(slot_count);
+                    std::copy(&pdata[0], &pdata[slot_count], std::begin(ps->pending_level_array));
+                }
+
+                break; // STARTCODE_DMX
+
+        case STARTCODE_PRIORITY:
             // Copy the last array back
             memcpy(ps->last_priority_array, ps->priority_array, DMX_SLOT_MAX);
             // Fill in the new array
@@ -572,6 +586,11 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
                     ps->source_levels_change = true;
                 }
             }
+
+            // Merge
+            performMerge();
+
+            break; // STARTCODE_PRIORITY
         }
 
         if(ps->source_params_change)
@@ -579,15 +598,39 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
             emit sourceChanged(ps);
             ps->source_params_change = false;
         }
+    }
+}
 
-        // Listen to synchronization source
-        if (ps->synchronization &&
-                (!ps->sync_listener || ps->sync_listener->universe() != ps->synchronization)) {
-            ps->sync_listener = sACNManager::getInstance()->getListener(ps->synchronization);
+
+void sACNListener::processPreMerge(sACNSource *ps, quint16 slot_count, quint8 *pdata) {
+    // This is DMX
+
+    // Copy the last array back
+    std::copy(std::begin(ps->level_array), std::end(ps->level_array), std::begin(ps->last_level_array));
+
+    // Fill in the new array
+    std::copy(&pdata[0], &pdata[slot_count], std::begin(ps->level_array));
+    std::fill(std::begin(ps->level_array) + slot_count,
+              std::begin(ps->level_array) + slot_count + (DMX_SLOT_MAX - slot_count),
+              NULL);
+
+    // Slot count change, re-merge all slots
+    if(ps->slot_count != slot_count)
+    {
+        ps->slot_count = slot_count;
+        ps->source_params_change = true;
+        ps->source_levels_change = true;
+        std::fill(std::begin(ps->dirty_array), std::end(ps->dirty_array), true);
+    }
+
+    // Compare the two
+    for(int i=0; i<DMX_SLOT_MAX; i++)
+    {
+        if(ps->level_array[i]!=ps->last_level_array[i])
+        {
+            ps->dirty_array[i] |= true;
+            ps->source_levels_change = true;
         }
-
-        // Merge
-        performMerge();
     }
 }
 
