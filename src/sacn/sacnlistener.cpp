@@ -26,6 +26,8 @@
 #include "sacndiscovery.h"
 #include "sacnsynchronization.h"
 
+#include "opencl/performmerge.h"
+
 #if (QT_VERSION >= QT_VERSION_CHECK(5, 8, 0))
 #include <QNetworkDatagram>
 #endif
@@ -117,6 +119,36 @@ void sACNListener::startReception()
             performMerge();
     }, Qt::DirectConnection);
 
+    // OpenCL merge on the GFX card
+    connect(openCL_experimental::clMerge::getWorker(), &openCL_experimental::clMergeWorker::dataChanged,
+            this, [=](uint16_t universe, openCL_experimental::clMerge::slotData_t *levels)
+    {
+        if (universe != this->universe())
+            return;
+
+        for (int slot = 0; slot < mergedLevels().count(); ++slot) {
+            QWriteLocker mergeLocker(&m_merged_levelsLock);
+            // Level
+            m_merged_levels[slot].level = levels->at(slot);
+
+            // Winning (and other) sources
+            auto winningCid = openCL_experimental::clMerge::winningSource(universe, slot);
+            if (!winningCid.isNull()) {
+                m_merged_levels[slot].otherSources.clear();
+                for(auto &source : m_sources) {
+                    if (source->src_cid == winningCid)
+                        m_merged_levels[slot].winningSource = source;
+                    else
+                        m_merged_levels[slot].otherSources.insert(source);
+                }
+            }
+        }
+
+        m_mergesPerSecond = openCL_experimental::clMerge::getMergesPerSec();
+
+        emit levelsChanged();
+    }, Qt::DirectConnection);
+
     // Everything is set
     emit listenerStarted(m_universe);
 }
@@ -146,7 +178,6 @@ void sACNListener::sampleExpiration()
 
 void sACNListener::checkSourceExpiration()
 {
-    char cidstr [CID::CIDSTRINGBYTES];
     for(std::vector<sACNSource *>::iterator it = m_sources.begin(); it != m_sources.end(); ++it)
     {
         if((*it)->src_valid)
@@ -154,18 +185,23 @@ void sACNListener::checkSourceExpiration()
             if((*it)->active.Expired() && (*it)->priority_wait.Expired())
             {
                 (*it)->src_valid = false;
-                CID::CIDIntoString((*it)->src_cid, cidstr);
                 emit sourceLost(*it);
                 m_mergeAll = true;
-                qDebug() << "Lost source " << cidstr;
+                qDebug() << "Lost source " << (*it)->src_cid;
+
+                if (openCL_experimental::clMerge::isRunning()) {
+                    std::fill((*it)->priority_array.begin(), (*it)->priority_array.end(), 0);
+                    openCL_experimental::clMerge::setSourcePriorities(
+                                (*it)->universe, (*it)->src_cid,
+                                (*it)->priority_array.begin(), (*it)->priority_array.end());
+                }
             }
             else if ((*it)->doing_per_channel && (*it)->priority_wait.Expired())
             {
-                CID::CIDIntoString((*it)->src_cid, cidstr);
                 (*it)->doing_per_channel = false;
                 emit sourceChanged(*it);
                 m_mergeAll = true;
-                qDebug() << "sACNListener" << QThread::currentThreadId() << ": Source stopped sending per-channel priority" << cidstr;
+                qDebug() << "sACNListener" << QThread::currentThreadId() << ": Source stopped sending per-channel priority" << (*it)->src_cid;
             }
         }
     }
@@ -605,9 +641,34 @@ void sACNListener::processDatagram(QByteArray data, QHostAddress destination, QH
     }
 }
 
-
 void sACNListener::processPreMerge(sACNSource *ps, quint16 slot_count, quint8 *pdata) {
     // This is DMX
+
+    // Merge via GFX card?
+    if (openCL_experimental::clMerge::isRunning()) {
+        // Source copy of levels
+        std::copy(&pdata[0], &pdata[slot_count], std::begin(ps->level_array));
+        std::fill(std::begin(ps->level_array) + slot_count,
+                  std::begin(ps->level_array) + slot_count + (DMX_SLOT_MAX - slot_count),
+                  NULL);
+
+        // Merger copy of levels
+        openCL_experimental::clMerge::setSourceLevels(
+                    ps->universe, ps->src_cid,
+                    ps->level_array.begin(), ps->level_array.end());
+        ps->slot_count = slot_count;
+
+        // Merger copy of priorities
+        if (!ps->doing_per_channel) {
+            std::fill(ps->priority_array.begin(), ps->priority_array.end(), ps->priority);
+        }
+        openCL_experimental::clMerge::setSourcePriorities(
+                    ps->universe, ps->src_cid,
+                    ps->priority_array.begin(), ps->priority_array.end());
+
+
+        return;
+    }
 
     // Copy the last array back
     std::copy(std::begin(ps->level_array), std::end(ps->level_array), std::begin(ps->last_level_array));
@@ -640,6 +701,12 @@ void sACNListener::processPreMerge(sACNSource *ps, quint16 slot_count, quint8 *p
 
 void sACNListener::performMerge()
 {
+    // Merging via GFX card?
+    if (openCL_experimental::clMerge::isRunning()) {
+        // TODO m_monitoredChannels not handled by clMerge
+        return;
+    }
+
     //array of addresses to merge. to prevent duplicates and because you can have
     //an odd collection of addresses, addresses[n] would be 'n' for the value in question
     // and -1 if not required
@@ -709,7 +776,7 @@ void sACNListener::performMerge()
     int skipCounter = 0;
     for(int i=0; i < DMX_SLOT_MAX && i<(number_of_addresses_to_merge + skipCounter); i++)
     {
-        QMutexLocker mergeLocker(&m_merged_levelsMutex);
+        QWriteLocker mergeLocker(&m_merged_levelsLock);
         m_merged_levels[i].changedSinceLastMerge = false;
         if(addresses_to_merge[i] == -1) {
             ++skipCounter;
@@ -743,7 +810,7 @@ void sACNListener::performMerge()
         skipCounter = 0;
         for(int i=0; i < DMX_SLOT_MAX && i<(number_of_addresses_to_merge + skipCounter); i++)
         {
-            QMutexLocker mergeLocker(&m_merged_levelsMutex);
+            QWriteLocker mergeLocker(&m_merged_levelsLock);
             if(addresses_to_merge[i] == -1) {
                ++skipCounter;
                 continue;
@@ -780,7 +847,7 @@ void sACNListener::performMerge()
     skipCounter = 0;
     for(int i=0; i < DMX_SLOT_MAX && i<(number_of_addresses_to_merge + skipCounter); i++)
     {
-        QMutexLocker mergeLocker(&m_merged_levelsMutex);
+        QWriteLocker mergeLocker(&m_merged_levelsLock);
         if(addresses_to_merge[i] == -1) {
             ++skipCounter;
             continue;

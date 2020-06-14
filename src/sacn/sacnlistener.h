@@ -23,6 +23,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QPoint>
+#include <QReadWriteLock>
 #include "consts.h"
 #include "streamingacn.h"
 #include "sacnsocket.h"
@@ -37,8 +38,8 @@ struct sACNMergedAddress
         changedSinceLastMerge = false;
     }
     int level;
-    sACNSource *winningSource;
-    QSet<sACNSource *> otherSources;
+    const sACNSource *winningSource;
+    QSet<const sACNSource *> otherSources;
     bool changedSinceLastMerge;
 };
 
@@ -66,8 +67,8 @@ public:
      * @return an sACNMergerdSourceList, a list of merged address structures, allowing you to see
      * the result of the merge algorithm together with all the sub-sources, by address
      */
-    sACNMergedSourceList mergedLevels() {
-        QMutexLocker mergeLocker(&m_merged_levelsMutex);
+    const sACNMergedSourceList &mergedLevels() {
+        QReadLocker mergeLocker(&m_merged_levelsLock);
         return m_merged_levels;
     }
 
@@ -123,7 +124,7 @@ private:
     std::vector<sACNSource *> m_sources;
     int m_last_levels[MAX_DMX_ADDRESS];
     sACNMergedSourceList m_merged_levels;
-    QMutex m_merged_levelsMutex;
+    QReadWriteLock m_merged_levelsLock;
     int m_universe;
     // The per-source hold last look time
     int m_ssHLL;

@@ -35,6 +35,8 @@
 #include "streamcommon.h"
 #include "fpscounter.h"
 
+#include "opencl/performmerge.h"
+
 // Forward Declarations
 class sACNListener;
 class sACNSentUniverse;
@@ -75,12 +77,15 @@ private:
     tSender createSender(CID cid, quint16 universe);
     QHash<CID, QHash<quint16, QWeakPointer<sACNSentUniverse>> > m_senderHash;
 
+    // Merging on the GFX, if avaliable
+    openCL_experimental::clMerge m_clMerge;
+
 public:
     tListener getListener(quint16 universe);
-    const decltype(m_listenerHash) getListenerList() { return m_listenerHash; }
+    const decltype(m_listenerHash) &getListenerList() { return m_listenerHash; }
 
     tSender getSender(quint16 universe, CID cid = CID::CreateCid());
-    const decltype(m_senderHash) getSenderList() { return m_senderHash; }
+    const decltype(m_senderHash) &getSenderList() { return m_senderHash; }
 
 signals:
     void newSender();

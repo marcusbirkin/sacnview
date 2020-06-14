@@ -119,3 +119,10 @@ win32 {
         OPENSSL_PATH = $${_PRO_FILE_PWD_}/libs/openssl-$${OPENSSL_VERS}-win64
     }
 }
+
+#OpenCL
+LIBS += -lOpenCL
+SOURCES += \
+    $$PWD/src/opencl/performmerge.cpp
+HEADERS += \
+    $$PWD/src/opencl/performmerge.h

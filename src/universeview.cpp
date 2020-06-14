@@ -345,7 +345,7 @@ void UniverseView::selectedAddressChanged(int address)
                     .arg(prio));
         if(list[address].otherSources.count()>0)
         {
-            foreach(sACNSource *source, list[address].otherSources)
+            for(auto source : list[address].otherSources)
             {
                 if(source->doing_per_channel)
                     prio = source->priority_array[address];
